@@ -119,6 +119,7 @@ class GeminiGenerate:
                     "step": 0.05,
                     "tooltip": "Nucleus sampling threshold"
                 }),
+                "safety_settings": (SAFETY_LEVELS,),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -137,13 +138,6 @@ class GeminiGenerate:
                     "multiline": False,
                     "tooltip": "Comma-separated stop sequences"
                 }),
-                "safety_settings": (SAFETY_LEVELS,),
-                "seed": ("INT", {
-                    "default": 0,
-                    "min": 0,
-                    "max": 0xFFFFFFFF,
-                    "tooltip": "Random seed for reproducibility (0 = random)"
-                }),
             },
         }
 
@@ -152,10 +146,6 @@ class GeminiGenerate:
     FUNCTION = "generate"
     CATEGORY = "Gemini/API"
     OUTPUT_NODE = True
-
-    @classmethod
-    def IS_CHANGED(cls, *args, **kwargs):
-        return float("NaN")
 
     def _compress_image(self, image_tensor):
         if not HAS_PIL:
@@ -222,7 +212,7 @@ class GeminiGenerate:
 
     def generate(self, client, model, prompt, max_tokens, temperature, top_p,
                  image=None, video="", system_instruction="",
-                 stop_sequences="", safety_settings="BLOCK_NONE", seed=0):
+                 stop_sequences="", safety_settings="BLOCK_NONE"):
 
         if not HAS_GOOGLE_GENAI:
             raise ImportError("google-genai not installed.")
@@ -252,9 +242,6 @@ class GeminiGenerate:
 
         if stop_sequences and stop_sequences.strip():
             config.stop_sequences = [s.strip() for s in stop_sequences.split(",") if s.strip()]
-
-        if seed > 0:
-            config.seed = seed
 
         response = api_client.models.generate_content(
             model=model,
