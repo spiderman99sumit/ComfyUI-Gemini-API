@@ -8,21 +8,42 @@ Custom ComfyUI nodes for Google Gemini AI models via API.
 - **Gemini Generate** - Single-turn text generation with image/video input
 - **Gemini Chat** - Multi-turn conversation with history
 
-## Supported Models (Gemini API)
+## Supported Models (Google AI Studio API)
 
+### Gemini 3.x
 | Model | Description |
 |---|---|
-| `gemini-2.5-flash` | Latest fast multimodal model |
-| `gemini-2.5-flash-lite` | Fastest, most affordable |
-| `gemini-2.5-pro` | Most capable reasoning model |
-| `gemini-2.0-flash` | Multimodal, fast |
-| `gemini-2.0-flash-lite` | Lightweight, fastest |
-| `gemini-1.5-flash` | Legacy flash model |
-| `gemini-1.5-flash-8b` | Small efficient model |
-| `gemini-1.5-pro` | Legacy pro model |
-| `gemini-1.0-pro` | Legacy baseline model |
+| `gemini-3.5-flash` | Latest fast model |
+| `gemini-3.1-pro` | Most capable reasoning |
+| `gemini-3.1-flash-lite` | Fastest, cheapest |
+| `gemini-3-flash` | Balanced performance |
 
-> **Note:** Gemma models (gemma-2, gemma-3, gemma-4) are open-source and NOT available through the official Gemini API. They require self-hosting or third-party providers (HuggingFace, Ollama, etc.).
+### Gemini 2.5
+| Model | Description |
+|---|---|
+| `gemini-2.5-flash` | Fast multimodal |
+| `gemini-2.5-flash-lite` | Ultra lightweight |
+| `gemini-2.5-pro` | Advanced reasoning |
+
+### Gemini 2.0
+| Model | Description |
+|---|---|
+| `gemini-2.0-flash` | Multimodal, fast |
+| `gemini-2.0-flash-lite` | Lightweight |
+
+### Gemma 4 (Open Source)
+| Model | Description |
+|---|---|
+| `gemma-4-31b-it` | 31B parameter instruction-tuned |
+| `gemma-4-26b-it` | 26B parameter instruction-tuned |
+
+### Legacy
+| Model | Description |
+|---|---|
+| `gemini-1.5-flash` | Legacy flash |
+| `gemini-1.5-flash-8b` | Small efficient |
+| `gemini-1.5-pro` | Legacy pro |
+| `gemini-1.0-pro` | Baseline |
 
 ## Installation
 

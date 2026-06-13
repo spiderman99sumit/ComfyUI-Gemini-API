@@ -21,11 +21,22 @@ except ImportError:
 
 
 GEMINI_MODELS = [
+    # Gemini 3.x
+    "gemini-3.5-flash",
+    "gemini-3.1-pro",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash",
+    # Gemini 2.5
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "gemini-2.5-pro",
+    # Gemini 2.0
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
+    # Gemma 4
+    "gemma-4-31b-it",
+    "gemma-4-26b-it",
+    # Legacy
     "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
     "gemini-1.5-pro",
