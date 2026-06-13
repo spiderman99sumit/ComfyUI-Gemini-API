@@ -1,14 +1,12 @@
 import json
 import os
 import base64
-import struct
-import tempfile
 import folder_paths
 from io import BytesIO
 
 try:
-    import google.generativeai as genai
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    from google import genai
+    from google.genai import types
     HAS_GOOGLE_GENAI = True
 except ImportError:
     HAS_GOOGLE_GENAI = False
@@ -43,12 +41,12 @@ GEMINI_MODELS = [
     "gemini-1.0-pro",
 ]
 
-DEFAULT_SAFETY_SETTINGS = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-}
+SAFETY_LEVELS = [
+    "BLOCK_NONE",
+    "BLOCK_LOW_AND_ABOVE",
+    "BLOCK_MEDIUM_AND_ABOVE",
+    "BLOCK_ONLY_HIGH",
+]
 
 
 class GeminiClient:
@@ -78,18 +76,12 @@ class GeminiClient:
 
         if not HAS_GOOGLE_GENAI:
             raise ImportError(
-                "google-generativeai not installed. "
-                "Run: pip install google-generativeai"
+                "google-genai not installed. "
+                "Run: pip install google-genai"
             )
 
-        genai.configure(api_key=api_key.strip())
-
-        try:
-            genai.list_models()
-        except Exception as e:
-            raise ValueError(f"API key validation failed: {e}")
-
-        return ({"api_key": api_key.strip()},)
+        client = genai.Client(api_key=api_key.strip())
+        return ({"api_key": api_key.strip(), "_client": client},)
 
 
 class GeminiGenerate:
@@ -145,7 +137,7 @@ class GeminiGenerate:
                     "multiline": False,
                     "tooltip": "Comma-separated stop sequences"
                 }),
-                "safety_settings": (["BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_ONLY_HIGH"],),
+                "safety_settings": (SAFETY_LEVELS,),
                 "seed": ("INT", {
                     "default": 0,
                     "min": 0,
@@ -166,27 +158,21 @@ class GeminiGenerate:
         return float("NaN")
 
     def _compress_image(self, image_tensor):
-        """Convert ComfyUI IMAGE tensor to compressed JPEG bytes."""
         if not HAS_PIL:
             raise ImportError("Pillow not installed. Run: pip install Pillow")
-
         img_array = image_tensor.squeeze(0).cpu().numpy()
         img_array = (img_array * 255).astype("uint8")
-
         if img_array.ndim == 3 and img_array.shape[2] == 4:
             img_array = img_array[:, :, :3]
-
         img = Image.fromarray(img_array)
         buffer = BytesIO()
         img.save(buffer, format="JPEG", quality=85)
         return buffer.getvalue()
 
     def _load_video(self, video_path):
-        """Load video file and return bytes."""
         video_path = video_path.strip()
         if not video_path:
-            return None
-
+            return None, None
         if not os.path.isabs(video_path):
             for search_dir in [
                 folder_paths.get_output_directory(),
@@ -198,93 +184,82 @@ class GeminiGenerate:
                 if os.path.isfile(full_path):
                     video_path = full_path
                     break
-
         if not os.path.isfile(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
-
+        ext = os.path.splitext(video_path)[1].lower()
+        mime_map = {
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+            ".avi": "video/x-msvideo",
+            ".webm": "video/webm",
+            ".mkv": "video/x-matroska",
+        }
+        mime_type = mime_map.get(ext, "video/mp4")
         with open(video_path, "rb") as f:
-            return f.read()
+            return f.read(), mime_type
 
     def _get_safety_settings(self, level):
-        """Map safety setting string to Google safety thresholds."""
         mapping = {
-            "BLOCK_NONE": HarmBlockThreshold.BLOCK_NONE,
-            "BLOCK_LOW_AND_ABOVE": HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-            "BLOCK_MEDIUM_AND_ABOVE": HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            "BLOCK_ONLY_HIGH": HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            "BLOCK_NONE": types.HarmBlockThreshold.BLOCK_NONE,
+            "BLOCK_LOW_AND_ABOVE": types.HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+            "BLOCK_MEDIUM_AND_ABOVE": types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            "BLOCK_ONLY_HIGH": types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
-        threshold = mapping.get(level, HarmBlockThreshold.BLOCK_NONE)
-        return {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: threshold,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: threshold,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: threshold,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: threshold,
-        }
+        threshold = mapping.get(level, types.HarmBlockThreshold.BLOCK_NONE)
+        return types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=threshold,
+        ), types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=threshold,
+        ), types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=threshold,
+        ), types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=threshold,
+        )
 
     def generate(self, client, model, prompt, max_tokens, temperature, top_p,
                  image=None, video="", system_instruction="",
                  stop_sequences="", safety_settings="BLOCK_NONE", seed=0):
 
         if not HAS_GOOGLE_GENAI:
-            raise ImportError("google-generativeai not installed.")
+            raise ImportError("google-genai not installed.")
 
-        genai.configure(api_key=client["api_key"])
+        api_client = genai.Client(api_key=client["api_key"])
 
-        model_instance = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=system_instruction if system_instruction.strip() else None,
-        )
-
-        contents = []
+        parts = []
 
         if image is not None:
             image_bytes = self._compress_image(image)
-            contents.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(image_bytes).decode("utf-8"),
-                }
-            })
+            parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
 
         if video and video.strip():
-            video_bytes = self._load_video(video)
+            video_bytes, video_mime = self._load_video(video)
             if video_bytes is not None:
-                ext = os.path.splitext(video.strip())[1].lower()
-                mime_map = {
-                    ".mp4": "video/mp4",
-                    ".mov": "video/quicktime",
-                    ".avi": "video/x-msvideo",
-                    ".webm": "video/webm",
-                    ".mkv": "video/x-matroska",
-                }
-                mime_type = mime_map.get(ext, "video/mp4")
-                contents.append({
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": base64.b64encode(video_bytes).decode("utf-8"),
-                    }
-                })
+                parts.append(types.Part.from_bytes(data=video_bytes, mime_type=video_mime))
 
-        contents.append(prompt)
+        parts.append(types.Part.from_text(text=prompt))
 
-        gen_config = genai.types.GenerationConfig(
+        config = types.GenerateContentConfig(
             max_output_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
+            system_instruction=system_instruction if system_instruction.strip() else None,
+            safety_settings=list(self._get_safety_settings(safety_settings)),
         )
 
         if stop_sequences and stop_sequences.strip():
-            gen_config.stop_sequences = [s.strip() for s in stop_sequences.split(",") if s.strip()]
+            config.stop_sequences = [s.strip() for s in stop_sequences.split(",") if s.strip()]
 
         if seed > 0:
-            gen_config.seed = seed
+            config.seed = seed
 
-        safety = self._get_safety_settings(safety_settings)
-
-        response = model_instance.generate_content(
-            contents=contents,
-            generation_config=gen_config,
-            safety_settings=safety,
+        response = api_client.models.generate_content(
+            model=model,
+            contents=parts,
+            config=config,
         )
 
         text = response.text if response.text else ""
@@ -332,7 +307,7 @@ class GeminiChat:
                 "chat_history": ("STRING", {
                     "default": "[]",
                     "multiline": True,
-                    "tooltip": "JSON array of previous messages: [{\"role\":\"user\",\"parts\":[\"text\"]},{\"role\":\"model\",\"parts\":[\"text\"]}]"
+                    "tooltip": "JSON array of previous messages"
                 }),
             },
             "optional": {
@@ -341,7 +316,7 @@ class GeminiChat:
                     "default": "",
                     "multiline": True,
                 }),
-                "safety_settings": (["BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_ONLY_HIGH"],),
+                "safety_settings": (SAFETY_LEVELS,),
             },
         }
 
@@ -355,81 +330,82 @@ class GeminiChat:
     def IS_CHANGED(cls, *args, **kwargs):
         return float("NaN")
 
+    def _compress_image(self, image_tensor):
+        if not HAS_PIL:
+            raise ImportError("Pillow not installed.")
+        img_array = image_tensor.squeeze(0).cpu().numpy()
+        img_array = (img_array * 255).astype("uint8")
+        if img_array.ndim == 3 and img_array.shape[2] == 4:
+            img_array = img_array[:, :, :3]
+        img = Image.fromarray(img_array)
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=85)
+        return buffer.getvalue()
+
+    def _get_safety_settings(self, level):
+        mapping = {
+            "BLOCK_NONE": types.HarmBlockThreshold.BLOCK_NONE,
+            "BLOCK_LOW_AND_ABOVE": types.HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+            "BLOCK_MEDIUM_AND_ABOVE": types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            "BLOCK_ONLY_HIGH": types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        }
+        threshold = mapping.get(level, types.HarmBlockThreshold.BLOCK_NONE)
+        return types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=threshold,
+        ), types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=threshold,
+        ), types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=threshold,
+        ), types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=threshold,
+        )
+
     def chat(self, client, model, prompt, max_tokens, temperature, top_p,
              chat_history="[]", image=None, system_instruction="",
              safety_settings="BLOCK_NONE"):
 
         if not HAS_GOOGLE_GENAI:
-            raise ImportError("google-generativeai not installed.")
+            raise ImportError("google-genai not installed.")
 
-        genai.configure(api_key=client["api_key"])
-
-        model_instance = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=system_instruction if system_instruction.strip() else None,
-        )
+        api_client = genai.Client(api_key=client["api_key"])
 
         try:
             history = json.loads(chat_history) if chat_history.strip() else []
         except json.JSONDecodeError:
             history = []
 
-        chat = model_instance.start_chat(history=history)
+        chat = api_client.chats.create(
+            model=model,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction if system_instruction.strip() else None,
+                max_output_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                safety_settings=list(self._get_safety_settings(safety_settings)),
+            ),
+            history=history,
+        )
 
-        user_parts = []
+        parts = []
         if image is not None:
-            from io import BytesIO
-            img_array = image.squeeze(0).cpu().numpy()
-            img_array = (img_array * 255).astype("uint8")
-            if img_array.ndim == 3 and img_array.shape[2] == 4:
-                img_array = img_array[:, :, :3]
-            pil_img = Image.fromarray(img_array)
-            buf = BytesIO()
-            pil_img.save(buf, format="JPEG", quality=85)
-            user_parts.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(buf.getvalue()).decode("utf-8"),
-                }
-            })
+            image_bytes = self._compress_image(image)
+            parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
+        parts.append(types.Part.from_text(text=prompt))
 
-        user_parts.append(prompt)
-
-        gen_config = genai.types.GenerationConfig(
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-        )
-
-        safety = self._get_safety_settings(safety_settings)
-
-        response = chat.send_message(
-            user_parts,
-            generation_config=gen_config,
-            safety_settings=safety,
-        )
-
+        response = chat.send_message(parts)
         text = response.text if response.text else ""
-        updated_history = json.dumps(chat.history, default=str)
+        updated_history = json.dumps([{
+            "role": m.role,
+            "parts": [{"text": p.text} for p in m.parts if hasattr(p, "text") and p.text]
+        } for m in chat.get_history()], default=str)
 
         return {
             "ui": {"text": [text]},
             "result": (text, updated_history, model),
-        }
-
-    def _get_safety_settings(self, level):
-        mapping = {
-            "BLOCK_NONE": HarmBlockThreshold.BLOCK_NONE,
-            "BLOCK_LOW_AND_ABOVE": HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-            "BLOCK_MEDIUM_AND_ABOVE": HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            "BLOCK_ONLY_HIGH": HarmBlockThreshold.BLOCK_ONLY_HIGH,
-        }
-        threshold = mapping.get(level, HarmBlockThreshold.BLOCK_NONE)
-        return {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: threshold,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: threshold,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: threshold,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: threshold,
         }
 
 
