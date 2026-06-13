@@ -232,13 +232,19 @@ class GeminiGenerate:
 
         parts.append(types.Part.from_text(text=prompt))
 
+        is_gemma = "gemma" in model.lower()
+
         config = types.GenerateContentConfig(
             max_output_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
-            system_instruction=system_instruction if system_instruction.strip() else None,
-            safety_settings=list(self._get_safety_settings(safety_settings)),
         )
+
+        if not is_gemma and system_instruction and system_instruction.strip():
+            config.system_instruction = system_instruction.strip()
+
+        if not is_gemma:
+            config.safety_settings = list(self._get_safety_settings(safety_settings))
 
         if stop_sequences and stop_sequences.strip():
             config.stop_sequences = [s.strip() for s in stop_sequences.split(",") if s.strip()]
@@ -365,15 +371,23 @@ class GeminiChat:
         except json.JSONDecodeError:
             history = []
 
+        is_gemma = "gemma" in model.lower()
+
+        chat_config = types.GenerateContentConfig(
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+        )
+
+        if not is_gemma and system_instruction and system_instruction.strip():
+            chat_config.system_instruction = system_instruction.strip()
+
+        if not is_gemma:
+            chat_config.safety_settings = list(self._get_safety_settings(safety_settings))
+
         chat = api_client.chats.create(
             model=model,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction if system_instruction.strip() else None,
-                max_output_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                safety_settings=list(self._get_safety_settings(safety_settings)),
-            ),
+            config=chat_config,
             history=history,
         )
 
